@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 
+from ytdub.config import AppConfig
 from ytdub.providers.transcribers.deepgram import DeepgramTranscriber
 from ytdub.providers.translators.deepl import DeepLTranslator
 from ytdub.providers.tts.elevenlabs import ElevenLabsTTS
@@ -47,3 +49,34 @@ def create_default_registry() -> ProviderRegistry:
     registry.register_tts(OpenAITTS(api_key="", voice="alloy"))
     registry.register_tts(ElevenLabsTTS(api_key="", voice_id="default"))
     return registry
+
+
+def create_runtime_registry(config: AppConfig) -> ProviderRegistry:
+    registry = ProviderRegistry()
+    registry.register_transcriber(
+        DeepgramTranscriber(api_key=_require_secret(config, "deepgram"))
+    )
+    registry.register_translator(
+        DeepLTranslator(api_key=_require_secret(config, "deepl"))
+    )
+    registry.register_tts(
+        OpenAITTS(
+            api_key=_require_secret(config, "openai"),
+            voice=os.environ.get("YTDUB_OPENAI_VOICE", "alloy"),
+        )
+    )
+    registry.register_tts(
+        ElevenLabsTTS(
+            api_key=_require_secret(config, "elevenlabs"),
+            voice_id=os.environ.get("YTDUB_ELEVENLABS_VOICE_ID", "default"),
+        )
+    )
+    return registry
+
+
+def _require_secret(config: AppConfig, provider_name: str) -> str:
+    env_var_name = config.credentials[provider_name]
+    secret = os.environ.get(env_var_name)
+    if not secret:
+        raise ValueError(f"Missing credential for {provider_name}: expected env var {env_var_name}")
+    return secret

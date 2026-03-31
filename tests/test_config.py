@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from ytdub.config import load_config
+from ytdub.config import load_config, resolve_job_settings
 
 
 def test_loads_default_provider_names() -> None:
@@ -42,3 +42,16 @@ def test_requires_selected_provider_credentials(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="openai"):
         load_config(config_path)
+
+
+def test_resolves_job_settings_with_environment_overrides(monkeypatch) -> None:
+    config = load_config(Path("configs/default.toml"))
+    monkeypatch.setenv("YTDUB_TRANSLATOR", "custom-translator")
+    monkeypatch.setenv("YTDUB_TARGET_LANGUAGE", "en")
+
+    settings = resolve_job_settings(config)
+
+    assert settings.transcriber == "deepgram"
+    assert settings.translator == "custom-translator"
+    assert settings.tts == "openai"
+    assert settings.target_language == "en"

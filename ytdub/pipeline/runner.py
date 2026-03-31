@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+import traceback
 from typing import Protocol
 
-from ytdub.models.job import JobRecord, PIPELINE_STEPS
+from ytdub.models.job import JobRecord, JobSettings, PIPELINE_STEPS
 from ytdub.storage.jobs import JobStore
 
 
@@ -30,8 +31,8 @@ class PipelineRunner:
         self.store = store
         self.steps = steps
 
-    def run(self, url: str) -> PipelineRunResult:
-        job = self.store.create(url=url)
+    def run(self, url: str, settings: JobSettings | None = None) -> PipelineRunResult:
+        job = self.store.create(url=url, settings=settings)
         return self._execute(job, self._remaining_steps(job))
 
     def resume(self, job_id: str) -> PipelineRunResult:
@@ -52,7 +53,17 @@ class PipelineRunner:
             work_dir.mkdir(parents=True, exist_ok=True)
 
             job = self.store.save(job.with_step_status(step_name, "running"))
-            result = step.run(job, work_dir)
+            try:
+                result = step.run(job, work_dir)
+            except Exception as exc:
+                self.store.write_log(
+                    job.job_id,
+                    step_name,
+                    "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)),
+                )
+                failed_job = job.with_step_status(step_name, "failed", current_step=step_name)
+                self.store.save(failed_job)
+                raise
             if result.artifacts:
                 job = self.store.save(job.with_artifacts(result.artifacts))
             job = self.store.save(job.with_step_status(step_name, "completed"))

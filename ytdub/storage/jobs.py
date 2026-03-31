@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from uuid import uuid4
 
-from ytdub.models.job import JobRecord
+from ytdub.models.job import JobRecord, JobSettings
 
 
 class JobStore:
@@ -12,8 +12,8 @@ class JobStore:
         self.root = Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
 
-    def create(self, url: str) -> JobRecord:
-        job = JobRecord.create(job_id=uuid4().hex[:12], url=url)
+    def create(self, url: str, settings: JobSettings | None = None) -> JobRecord:
+        job = JobRecord.create(job_id=uuid4().hex[:12], url=url, settings=settings)
         self.save(job)
         return job
 
@@ -43,3 +43,10 @@ class JobStore:
 
     def _job_file(self, job_id: str) -> Path:
         return self.root / job_id / "job.json"
+
+    def write_log(self, job_id: str, step_name: str, content: str) -> Path:
+        log_dir = self.root / job_id / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_path = log_dir / f"{step_name}.log"
+        log_path.write_text(content, encoding="utf-8")
+        return log_path

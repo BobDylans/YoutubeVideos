@@ -6,10 +6,11 @@ import os
 from pathlib import Path
 from dataclasses import dataclass
 
-from ytdub.config import load_config, resolve_runtime_paths
-from ytdub.models.job import JobRecord
+from ytdub.config import load_config, resolve_job_settings, resolve_runtime_paths
+from ytdub.models.job import JobRecord, JobSettings
 from ytdub.pipeline.runner import PipelineRunner, StepResult
 from ytdub.pipeline.steps import build_default_steps
+from ytdub.providers.registry import create_runtime_registry
 from ytdub.storage.jobs import JobStore
 from ytdub.models.job import PIPELINE_STEPS
 
@@ -52,10 +53,10 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    runner, store = _build_runtime()
+    runner, store, job_settings = _build_runtime()
 
     if args.command == "run":
-        result = runner.run(args.youtube_url)
+        result = runner.run(args.youtube_url, settings=job_settings)
         _print_json({"job_id": result.job.job_id, "executed_steps": result.executed_steps})
         return 0
 
@@ -65,7 +66,7 @@ def main(argv: list[str] | None = None) -> int:
             youtube_url = line.strip()
             if not youtube_url:
                 continue
-            result = runner.run(youtube_url)
+            result = runner.run(youtube_url, settings=job_settings)
             results.append({"job_id": result.job.job_id, "url": youtube_url})
         _print_json(results)
         return 0
@@ -91,13 +92,18 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-def _build_runtime() -> tuple[PipelineRunner, JobStore]:
+def _build_runtime() -> tuple[PipelineRunner, JobStore, JobSettings]:
     config = load_config(Path("configs/default.toml"))
     runtime_paths = resolve_runtime_paths(config)
     store = JobStore(runtime_paths.jobs_dir)
-    steps = build_stub_steps() if os.environ.get("YTDUB_USE_STUB_STEPS") == "1" else build_default_steps()
+    steps = (
+        build_stub_steps()
+        if os.environ.get("YTDUB_USE_STUB_STEPS") == "1"
+        else build_default_steps(create_runtime_registry(config))
+    )
     runner = PipelineRunner(store=store, steps=steps)
-    return runner, store
+    job_settings = resolve_job_settings(config)
+    return runner, store, job_settings
 
 
 def _print_json(payload: object) -> None:

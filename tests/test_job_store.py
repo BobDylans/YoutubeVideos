@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from ytdub.models.job import JobSettings
 from ytdub.storage.jobs import JobStore
 
 
@@ -29,3 +30,22 @@ def test_update_and_list_jobs(tmp_path) -> None:
         "https://youtube.com/watch?v=first",
         "https://youtube.com/watch?v=second",
     ]
+
+
+def test_create_job_persists_job_settings(tmp_path) -> None:
+    store = JobStore(tmp_path)
+
+    job = store.create(
+        url="https://youtube.com/watch?v=abc123",
+        settings=JobSettings(
+            transcriber="deepgram",
+            translator="deepl",
+            tts="elevenlabs",
+            target_language="ja",
+        ),
+    )
+    loaded = store.load(job.job_id)
+
+    assert loaded.settings.translator == "deepl"
+    assert loaded.settings.tts == "elevenlabs"
+    assert loaded.settings.target_language == "ja"

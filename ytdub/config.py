@@ -5,6 +5,8 @@ import os
 from pathlib import Path
 import tomllib
 
+from ytdub.models.job import JobSettings
+
 
 @dataclass(frozen=True)
 class ProviderConfig:
@@ -36,6 +38,15 @@ def resolve_runtime_paths(config: AppConfig) -> PathConfig:
     jobs_dir = Path(os.environ.get("YTDUB_JOBS_DIR", config.paths.jobs_dir))
     outputs_dir = Path(os.environ.get("YTDUB_OUTPUTS_DIR", config.paths.outputs_dir))
     return PathConfig(jobs_dir=jobs_dir, outputs_dir=outputs_dir)
+
+
+def resolve_job_settings(config: AppConfig) -> JobSettings:
+    return JobSettings(
+        transcriber=os.environ.get("YTDUB_TRANSCRIBER", config.providers.transcriber),
+        translator=os.environ.get("YTDUB_TRANSLATOR", config.providers.translator),
+        tts=os.environ.get("YTDUB_TTS", config.providers.tts),
+        target_language=os.environ.get("YTDUB_TARGET_LANGUAGE", config.defaults.target_language),
+    )
 
 
 def load_config(path: str | Path) -> AppConfig:

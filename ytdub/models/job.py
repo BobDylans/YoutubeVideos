@@ -14,9 +14,18 @@ class StepStatus:
 
 
 @dataclass(frozen=True)
+class JobSettings:
+    transcriber: str = "deepgram"
+    translator: str = "deepl"
+    tts: str = "openai"
+    target_language: str = "zh"
+
+
+@dataclass(frozen=True)
 class JobRecord:
     job_id: str
     url: str
+    settings: JobSettings
     current_step: str
     steps: dict[str, StepStatus]
     artifacts: dict[str, str]
@@ -27,6 +36,7 @@ class JobRecord:
         return {
             "job_id": self.job_id,
             "url": self.url,
+            "settings": asdict(self.settings),
             "current_step": self.current_step,
             "steps": {name: asdict(step) for name, step in self.steps.items()},
             "artifacts": self.artifacts,
@@ -35,11 +45,17 @@ class JobRecord:
         }
 
     @classmethod
-    def create(cls, job_id: str, url: str) -> "JobRecord":
+    def create(
+        cls,
+        job_id: str,
+        url: str,
+        settings: JobSettings | None = None,
+    ) -> "JobRecord":
         now = _timestamp()
         return cls(
             job_id=job_id,
             url=url,
+            settings=settings or JobSettings(),
             current_step=PIPELINE_STEPS[0],
             steps={step_name: StepStatus(status="pending", updated_at=now) for step_name in PIPELINE_STEPS},
             artifacts={},
@@ -54,6 +70,7 @@ class JobRecord:
         return cls(
             job_id=str(data["job_id"]),
             url=str(data["url"]),
+            settings=JobSettings(**dict(data.get("settings", {}))),
             current_step=str(data["current_step"]),
             steps={
                 step_name: StepStatus(
@@ -72,6 +89,7 @@ class JobRecord:
         return JobRecord(
             job_id=self.job_id,
             url=self.url,
+            settings=self.settings,
             current_step=current_step or step_name,
             steps={
                 **self.steps,
@@ -87,6 +105,7 @@ class JobRecord:
         return JobRecord(
             job_id=self.job_id,
             url=self.url,
+            settings=self.settings,
             current_step=self.current_step,
             steps=self.steps,
             artifacts={**self.artifacts, **artifacts},
@@ -113,6 +132,7 @@ class JobRecord:
         return JobRecord(
             job_id=self.job_id,
             url=self.url,
+            settings=self.settings,
             current_step=step_name,
             steps=reset_steps,
             artifacts=remaining_artifacts,
