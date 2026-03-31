@@ -1,0 +1,23 @@
+[paths]
+jobs_dir = "jobs"
+outputs_dir = "outputs"
+
+[providers]
+transcriber = "deepgram"
+translator = "deepl"
+tts = "openai"
+
+[defaults]
+target_language = "zh"
+
+[credentials.deepgram]
+api_key_env = "DEEPGRAM_API_KEY"
+
+[credentials.deepl]
+api_key_env = "DEEPL_API_KEY"
+
+[credentials.openai]
+api_key_env = "OPENAI_API_KEY"
+
+[credentials.elevenlabs]
+api_key_env = "ELEVENLABS_API_KEY"
