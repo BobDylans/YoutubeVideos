@@ -37,6 +37,7 @@ _COMPACT_PUNCT_TRANSLATION = str.maketrans(
         ":": "：",
     }
 )
+_COMPACT_TRAILING_UNIT_CHARS = frozenset("年月日号点个次秒分时天周万亿%％")
 
 
 @dataclass(frozen=True)
@@ -242,6 +243,9 @@ def _wrap_subtitle_text(text: str) -> str:
         return normalized
 
     if compact:
+        clauses = _split_compact_clauses(normalized)
+        if len(clauses) == 1 and _display_units(normalized, compact=True) <= _compact_single_line_limit(layout):
+            return normalized
         return _wrap_compact_text(normalized)
 
     return _balanced_two_line_wrap(normalized, compact=compact)
@@ -292,6 +296,9 @@ def _chunk_compact_text(text: str, layout: SubtitleLayout) -> list[str]:
     clauses = _split_compact_clauses(text)
     if not clauses:
         return []
+
+    if len(clauses) == 1 and _display_units(text, compact=True) <= _compact_single_line_limit(layout):
+        return [text]
 
     if _display_units(text, compact=True) > layout.max_segment_units and len(clauses) > 1:
         return clauses
@@ -370,14 +377,12 @@ def _wrap_compact_text(text: str) -> str:
                 best_index = index
         return "\n".join(["".join(clauses[:best_index]), "".join(clauses[best_index:])])
 
-    return _balanced_two_line_wrap(text, compact=True)
+    return _balanced_compact_token_wrap(text)
 
 
 def _balanced_two_line_wrap(text: str, *, compact: bool) -> str:
     if compact:
-        characters = [char for char in text if not char.isspace()]
-        midpoint = max(1, len(characters) // 2)
-        return "\n".join(["".join(characters[:midpoint]), "".join(characters[midpoint:])])
+        return _balanced_compact_token_wrap(text)
 
     words = text.split()
     if len(words) <= 1:
@@ -400,6 +405,74 @@ def _display_units(text: str, *, compact: bool) -> int:
     if compact:
         return sum(1 for char in text if not char.isspace())
     return len(text)
+
+
+def _compact_single_line_limit(layout: SubtitleLayout) -> int:
+    return layout.max_line_units * 2
+
+
+def _balanced_compact_token_wrap(text: str) -> str:
+    tokens = _tokenize_compact_text(text)
+    if len(tokens) <= 1:
+        return text
+
+    best_index = 1
+    best_score: tuple[int, int] | None = None
+    for index in range(1, len(tokens)):
+        left = "".join(tokens[:index])
+        right = "".join(tokens[index:])
+        if not left or not right:
+            continue
+        score = (
+            max(_display_units(left, compact=True), _display_units(right, compact=True)),
+            abs(_display_units(left, compact=True) - _display_units(right, compact=True)),
+        )
+        if best_score is None or score < best_score:
+            best_score = score
+            best_index = index
+
+    return "\n".join(["".join(tokens[:best_index]), "".join(tokens[best_index:])])
+
+
+def _tokenize_compact_text(text: str) -> list[str]:
+    tokens: list[str] = []
+    index = 0
+
+    while index < len(text):
+        char = text[index]
+        if char.isspace():
+            index += 1
+            continue
+
+        if char in _COMPACT_PUNCTUATION:
+            if tokens:
+                tokens[-1] += char
+            else:
+                tokens.append(char)
+            index += 1
+            continue
+
+        if _is_ascii_token_char(char):
+            start = index
+            index += 1
+            while index < len(text) and _is_ascii_token_char(text[index]):
+                index += 1
+
+            token = text[start:index]
+            while index < len(text) and text[index] in _COMPACT_TRAILING_UNIT_CHARS:
+                token += text[index]
+                index += 1
+            tokens.append(token)
+            continue
+
+        tokens.append(char)
+        index += 1
+
+    return tokens
+
+
+def _is_ascii_token_char(char: str) -> bool:
+    return char.isascii() and (char.isalnum() or char in {".", "/", "-", "_", "+", "#"})
 
 
 def _clean_subtitle_text(text: str) -> str:

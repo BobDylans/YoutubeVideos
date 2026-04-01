@@ -211,3 +211,48 @@ def test_render_srt_wraps_compact_text_on_semantic_boundary() -> None:
     )
 
     assert "我们先检查货架，\n然后检查后仓。" in srt
+
+
+def test_render_srt_keeps_mixed_technical_terms_intact() -> None:
+    srt = render_srt(
+        [
+            Segment(
+                start_ms=0,
+                end_ms=2600,
+                text="如果你是一名JavaScript开发者，",
+            )
+        ]
+    )
+
+    assert "Java\nScript" not in srt
+    assert "JavaScript" in srt
+
+
+def test_render_srt_keeps_numbers_attached_to_cjk_units() -> None:
+    srt = render_srt(
+        [
+            Segment(
+                start_ms=0,
+                end_ms=2000,
+                text="今天是2026年3月31日，",
+            )
+        ]
+    )
+
+    assert "2026\n年" not in srt
+    assert "2026年3月31日" in srt
+
+
+def test_render_srt_prefers_single_line_for_short_compact_sentence() -> None:
+    srt = render_srt(
+        [
+            Segment(
+                start_ms=0,
+                end_ms=2200,
+                text="因为它几乎肯定会让你哭出来。",
+            )
+        ]
+    )
+
+    assert "因为它几乎肯定会让你哭出来。" in srt
+    assert "因为它几乎肯定\n会让你哭出来。" not in srt
