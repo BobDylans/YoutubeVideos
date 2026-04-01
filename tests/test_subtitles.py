@@ -161,3 +161,53 @@ def test_reshape_subtitle_segments_falls_back_to_word_splitting() -> None:
     assert " ".join(segment.text for segment in segments).replace("  ", " ") == (
         "This subtitle has no punctuation and still needs readable chunks for viewers"
     )
+
+
+def test_reshape_subtitle_segments_prefers_semantic_split_for_chinese_text() -> None:
+    segments = reshape_subtitle_segments(
+        [
+            Segment(
+                start_ms=0,
+                end_ms=6000,
+                text="我们先检查货架然后检查后仓最后给经理打电话",
+            )
+        ],
+        language="zh",
+    )
+
+    assert [segment.text for segment in segments] == [
+        "我们先检查货架，",
+        "然后检查后仓，",
+        "最后给经理打电话。",
+    ]
+    assert segments[0].start_ms == 0
+    assert segments[-1].end_ms == 6000
+
+
+def test_reshape_subtitle_segments_normalizes_ascii_punctuation_for_chinese() -> None:
+    segments = reshape_subtitle_segments(
+        [
+            Segment(
+                start_ms=0,
+                end_ms=3000,
+                text="先检查货架,然后检查后仓",
+            )
+        ],
+        language="zh",
+    )
+
+    assert [segment.text for segment in segments] == ["先检查货架，然后检查后仓。"]
+
+
+def test_render_srt_wraps_compact_text_on_semantic_boundary() -> None:
+    srt = render_srt(
+        [
+            Segment(
+                start_ms=0,
+                end_ms=2000,
+                text="我们先检查货架，然后检查后仓。",
+            )
+        ]
+    )
+
+    assert "我们先检查货架，\n然后检查后仓。" in srt

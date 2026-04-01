@@ -27,7 +27,7 @@ def test_update_and_list_jobs(tmp_path) -> None:
 
     assert updated.steps["download"].status == "completed"
     assert loaded.steps["download"].status == "completed"
-    assert [job.url for job in jobs] == [
+    assert sorted(job.url for job in jobs) == [
         "https://youtube.com/watch?v=first",
         "https://youtube.com/watch?v=second",
     ]

@@ -7,7 +7,36 @@ import re
 from ytdub.models.segments import Segment
 
 _COMPACT_LANGUAGE_PREFIXES = ("zh", "ja", "ko", "th")
-_COMPACT_PUNCTUATION = "，。！？；：、,.!?;:"
+_COMPACT_PUNCTUATION = "，。！？；：、"
+_COMPACT_CONNECTORS = (
+    "但是",
+    "不过",
+    "然后",
+    "最后",
+    "因此",
+    "所以",
+    "于是",
+    "并且",
+    "而且",
+    "如果",
+    "虽然",
+    "因为",
+    "同时",
+    "另外",
+    "此外",
+    "接着",
+    "随后",
+)
+_COMPACT_PUNCT_TRANSLATION = str.maketrans(
+    {
+        ",": "，",
+        ".": "。",
+        "!": "！",
+        "?": "？",
+        ";": "；",
+        ":": "：",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -74,7 +103,7 @@ def parse_subtitle_file(path: Path) -> list[Segment]:
 
 
 def _reshape_segment(segment: Segment, *, compact: bool, layout: SubtitleLayout) -> list[Segment]:
-    cleaned_text = _clean_subtitle_text(segment.text)
+    cleaned_text = _prepare_subtitle_text(segment.text, compact=compact)
     if not cleaned_text:
         return []
 
@@ -93,6 +122,9 @@ def _reshape_segment(segment: Segment, *, compact: bool, layout: SubtitleLayout)
 
 
 def _chunk_text(text: str, *, compact: bool, layout: SubtitleLayout) -> list[str]:
+    if compact:
+        return _chunk_compact_text(text, layout)
+
     phrase_chunks = _pack_chunks(
         _split_phrases(text, compact=compact),
         compact=compact,
@@ -200,21 +232,24 @@ def _allocate_time_ranges(start_ms: int, end_ms: int, chunks: list[str], *, comp
 
 
 def _wrap_subtitle_text(text: str) -> str:
-    normalized = _clean_subtitle_text(text)
+    compact = _is_compact_text(text)
+    normalized = _prepare_subtitle_text(text, compact=compact)
     if not normalized:
         return ""
 
-    compact = _is_compact_text(normalized)
     layout = _layout_for_compact(compact)
     if _display_units(normalized, compact=compact) <= layout.max_line_units:
         return normalized
+
+    if compact:
+        return _wrap_compact_text(normalized)
 
     return _balanced_two_line_wrap(normalized, compact=compact)
 
 
 def _layout_for_compact(compact: bool) -> SubtitleLayout:
     if compact:
-        return SubtitleLayout(max_segment_units=22, max_line_units=11)
+        return SubtitleLayout(max_segment_units=16, max_line_units=11)
     return SubtitleLayout(max_segment_units=48, max_line_units=24)
 
 
@@ -237,7 +272,105 @@ def _should_use_compact_layout(language: str, text: str) -> bool:
 
 def _join_parts(parts: list[str], *, compact: bool) -> str:
     separator = "" if compact else " "
-    return _clean_subtitle_text(separator.join(parts))
+    return _prepare_subtitle_text(separator.join(parts), compact=compact)
+
+
+def _prepare_subtitle_text(text: str, *, compact: bool) -> str:
+    normalized = _clean_subtitle_text(text)
+    if not compact:
+        return normalized
+
+    normalized = normalized.translate(_COMPACT_PUNCT_TRANSLATION)
+    normalized = re.sub(r"\s*([，。！？；：、])\s*", r"\1", normalized)
+    normalized = re.sub(r"(?<=[\u4e00-\u9fff])\s+(?=[\u4e00-\u9fff])", "", normalized)
+    if normalized and _is_compact_text(normalized) and normalized[-1] not in _COMPACT_PUNCTUATION:
+        normalized += "。"
+    return normalized
+
+
+def _chunk_compact_text(text: str, layout: SubtitleLayout) -> list[str]:
+    clauses = _split_compact_clauses(text)
+    if not clauses:
+        return []
+
+    if _display_units(text, compact=True) > layout.max_segment_units and len(clauses) > 1:
+        return clauses
+
+    phrase_chunks = _pack_chunks(clauses, compact=True, max_units=layout.max_segment_units)
+    if len(phrase_chunks) > 1:
+        return phrase_chunks
+    return _fallback_chunks(text, compact=True, max_units=layout.max_segment_units)
+
+
+def _split_compact_clauses(text: str) -> list[str]:
+    clauses = [match.group(0) for match in re.finditer(r"[^，。！？；：、]+[，。！？；：、]?", text) if match.group(0)]
+    if len(clauses) > 1:
+        return _ensure_compact_clause_punctuation(clauses)
+
+    positions = sorted(
+        {
+            index
+            for marker in _COMPACT_CONNECTORS
+            for index in _find_all_occurrences(text, marker)
+            if 0 < index < len(text)
+        }
+    )
+    if not positions:
+        return [text]
+
+    clauses = []
+    start = 0
+    for index in positions:
+        if index - start < 4:
+            continue
+        clauses.append(text[start:index])
+        start = index
+    if start < len(text):
+        clauses.append(text[start:])
+    return _ensure_compact_clause_punctuation([clause for clause in clauses if clause])
+
+
+def _ensure_compact_clause_punctuation(clauses: list[str]) -> list[str]:
+    normalized: list[str] = []
+    for index, clause in enumerate(clauses):
+        cleaned = clause.strip()
+        if not cleaned:
+            continue
+        if cleaned[-1] not in _COMPACT_PUNCTUATION:
+            cleaned += "。" if index == len(clauses) - 1 else "，"
+        normalized.append(cleaned)
+    return normalized
+
+
+def _find_all_occurrences(text: str, marker: str) -> list[int]:
+    positions: list[int] = []
+    start = 0
+    while True:
+        index = text.find(marker, start)
+        if index == -1:
+            return positions
+        positions.append(index)
+        start = index + len(marker)
+
+
+def _wrap_compact_text(text: str) -> str:
+    clauses = _split_compact_clauses(text)
+    if len(clauses) >= 2:
+        best_index = 1
+        best_score: tuple[int, int] | None = None
+        for index in range(1, len(clauses)):
+            left = "".join(clauses[:index])
+            right = "".join(clauses[index:])
+            score = (
+                abs(_display_units(left, compact=True) - _display_units(right, compact=True)),
+                max(_display_units(left, compact=True), _display_units(right, compact=True)),
+            )
+            if best_score is None or score < best_score:
+                best_score = score
+                best_index = index
+        return "\n".join(["".join(clauses[:best_index]), "".join(clauses[best_index:])])
+
+    return _balanced_two_line_wrap(text, compact=True)
 
 
 def _balanced_two_line_wrap(text: str, *, compact: bool) -> str:
@@ -271,7 +404,6 @@ def _display_units(text: str, *, compact: bool) -> int:
 
 def _clean_subtitle_text(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
-
 
 def _format_timestamp(milliseconds: int) -> str:
     hours, remainder = divmod(milliseconds, 3_600_000)

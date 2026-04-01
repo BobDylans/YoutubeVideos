@@ -435,6 +435,50 @@ def test_translate_step_reshapes_long_translated_segments_for_subtitles(tmp_path
     assert payload["segments"][-1]["end_ms"] == 6000
 
 
+def test_translate_step_normalizes_chinese_punctuation_and_semantic_breaks(tmp_path: Path) -> None:
+    transcript_path = tmp_path / "transcript.json"
+    transcript_path.write_text(
+        json.dumps(
+            {
+                "segments": [
+                    {
+                        "start_ms": 0,
+                        "end_ms": 6000,
+                        "text": "we first check the shelves and then the back room and finally call the manager",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeTranslator:
+        def translate_segments(self, segments: list[Segment], target_language: str, transport=None) -> list[Segment]:
+            assert len(segments) == 1
+            assert target_language == "zh"
+            return [
+                Segment(
+                    start_ms=0,
+                    end_ms=6000,
+                    text="我们先检查货架然后检查后仓最后给经理打电话",
+                )
+            ]
+
+    job = JobRecord.create(job_id="job-123", url="https://youtube.com/watch?v=abc").with_artifacts(
+        {"transcribe": str(transcript_path)}
+    )
+    step = TranslateStep(translator=FakeTranslator())
+
+    result = step.run(job, tmp_path)
+    payload = json.loads(Path(result.artifacts["translate"]).read_text(encoding="utf-8"))
+
+    assert [segment["text"] for segment in payload["segments"]] == [
+        "我们先检查货架，",
+        "然后检查后仓，",
+        "最后给经理打电话。",
+    ]
+
+
 def test_synthesize_step_records_selected_tts_provider(tmp_path: Path) -> None:
     translation_path = tmp_path / "translation.json"
     translation_path.write_text('{"segments": []}', encoding="utf-8")
