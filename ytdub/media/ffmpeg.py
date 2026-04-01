@@ -21,7 +21,7 @@ def run_ffmpeg(args: list[str]) -> CompletedProcess[str]:
 def run_ffprobe(args: list[str]) -> CompletedProcess[str]:
     return _run_command("ffprobe", args)
 
-
+# 传入各项参数,组合成为正确的指令
 def _run_command(command: str, args: list[str]) -> CompletedProcess[str]:
     try:
         return run(

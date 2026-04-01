@@ -13,6 +13,7 @@ class DownloadStep:
 
     def run(self, job: JobRecord, work_dir: Path) -> StepResult:
         output_template = work_dir / "source.%(ext)s"
+        # 先规定好基础的command参数
         base_args = [
             "--no-progress",
             "--output",
@@ -29,10 +30,12 @@ class DownloadStep:
         ]
         subtitle_download_succeeded = True
         try:
+            # 先尝试执行yt-dlp指令,其中包括英文字幕和自动字幕
             run_ytdlp([*subtitle_args, *base_args])
         except ExternalCommandError as exc:
             if not _is_subtitle_download_failure(exc):
                 raise
+            # 如果获取字幕失败,就会走基础版本,然后走ASR尝试自己嵌入
             subtitle_download_succeeded = False
             run_ytdlp(base_args)
 

@@ -42,6 +42,7 @@ def resolve_runtime_paths(config: AppConfig) -> PathConfig:
 
 def resolve_job_settings(config: AppConfig) -> JobSettings:
     return JobSettings(
+        # 从这里将.env文件中有关翻译以及tts相关功能的接口设置一下
         transcriber=os.environ.get("YTDUB_TRANSCRIBER", config.providers.transcriber),
         translator=os.environ.get("YTDUB_TRANSLATOR", config.providers.translator),
         tts=os.environ.get("YTDUB_TTS", config.providers.tts),

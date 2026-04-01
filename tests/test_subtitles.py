@@ -6,7 +6,12 @@ from pathlib import Path
 import pytest
 
 from ytdub.media.ffmpeg import ExternalCommandError, run_ffmpeg
-from ytdub.media.subtitles import build_subtitles_filter, parse_subtitle_file, render_srt
+from ytdub.media.subtitles import (
+    build_subtitles_filter,
+    parse_subtitle_file,
+    render_srt,
+    reshape_subtitle_segments,
+)
 from ytdub.models.segments import Segment
 
 
@@ -20,6 +25,23 @@ def test_srt_render_preserves_segment_order() -> None:
 
     assert "1\n00:00:00,000 --> 00:00:01,200\nhello" in srt
     assert "2\n00:00:01,500 --> 00:00:02,400\nworld" in srt
+
+
+def test_render_srt_wraps_long_lines_to_two_rows() -> None:
+    srt = render_srt(
+        [
+            Segment(
+                start_ms=0,
+                end_ms=2000,
+                text="This subtitle should wrap into two readable lines for display",
+            )
+        ]
+    )
+
+    assert (
+        "This subtitle should wrap into\n"
+        "two readable lines for display"
+    ) in srt
 
 
 def test_run_ffmpeg_wraps_command_failures(monkeypatch) -> None:
@@ -96,3 +118,46 @@ def test_parse_subtitle_file_merges_incremental_youtube_captions(tmp_path: Path)
     assert segments == [
         Segment(start_ms=2960, end_ms=10070, text="I found something in the store. Okay."),
     ]
+
+
+def test_reshape_subtitle_segments_splits_long_punctuated_text() -> None:
+    segments = reshape_subtitle_segments(
+        [
+            Segment(
+                start_ms=0,
+                end_ms=6000,
+                text="First we check the shelves, then we check the back room, and finally we call the manager.",
+            )
+        ],
+        language="en",
+    )
+
+    assert len(segments) == 3
+    assert [segment.text for segment in segments] == [
+        "First we check the shelves,",
+        "then we check the back room,",
+        "and finally we call the manager.",
+    ]
+    assert segments[0].start_ms == 0
+    assert segments[-1].end_ms == 6000
+    assert all(current.end_ms <= following.start_ms for current, following in zip(segments, segments[1:]))
+
+
+def test_reshape_subtitle_segments_falls_back_to_word_splitting() -> None:
+    segments = reshape_subtitle_segments(
+        [
+            Segment(
+                start_ms=1000,
+                end_ms=5000,
+                text="This subtitle has no punctuation and still needs readable chunks for viewers",
+            )
+        ],
+        language="en",
+    )
+
+    assert len(segments) >= 2
+    assert segments[0].start_ms == 1000
+    assert segments[-1].end_ms == 5000
+    assert " ".join(segment.text for segment in segments).replace("  ", " ") == (
+        "This subtitle has no punctuation and still needs readable chunks for viewers"
+    )

@@ -4,6 +4,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
+from ytdub.media.subtitles import reshape_subtitle_segments
 from ytdub.models.job import JobRecord
 from ytdub.models.segments import Segment
 from ytdub.pipeline.runner import StepResult
@@ -37,6 +38,10 @@ class TranslateStep:
             )
             if provider is not None
             else []
+        )
+        translated_segments = reshape_subtitle_segments(
+            translated_segments,
+            language=job.settings.target_language,
         )
         artifact.write_text(
             json.dumps(
