@@ -51,6 +51,7 @@ def resolve_job_settings(config: AppConfig) -> JobSettings:
 
 def load_config(path: str | Path) -> AppConfig:
     config_path = Path(path)
+    _load_repo_env_file(config_path)
     data = tomllib.loads(config_path.read_text(encoding="utf-8"))
 
     providers_data = data["providers"]
@@ -64,6 +65,7 @@ def load_config(path: str | Path) -> AppConfig:
     missing_credentials = [
         provider_name
         for provider_name in selected_providers.values()
+        if provider_name != "none"
         if not credentials_data.get(provider_name, {}).get("api_key_env")
     ]
     if missing_credentials:
@@ -89,3 +91,21 @@ def load_config(path: str | Path) -> AppConfig:
             if provider_data.get("api_key_env")
         },
     )
+
+
+def _load_repo_env_file(config_path: Path) -> None:
+    env_path = config_path.resolve().parent.parent / ".env"
+    if not env_path.exists():
+        return
+
+    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip("\"'")
+        if not key or key in os.environ:
+            continue
+        os.environ[key] = value

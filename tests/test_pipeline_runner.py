@@ -30,7 +30,7 @@ class FakeStep:
 def build_runner(tmp_path: Path) -> tuple[PipelineRunner, JobStore]:
     jobs_dir = tmp_path / "jobs"
     store = JobStore(jobs_dir)
-    steps = {name: FakeStep(name) for name in ("download", "transcribe", "translate", "synthesize", "compose")}
+    steps = {name: FakeStep(name) for name in ("download", "transcribe", "translate", "compose")}
     return PipelineRunner(store=store, steps=steps), store
 
 
@@ -43,7 +43,7 @@ def test_runner_skips_completed_steps(tmp_path: Path) -> None:
     loaded = store.load(job.job_id)
 
     assert "download" not in result.executed_steps
-    assert result.executed_steps == ["transcribe", "translate", "synthesize", "compose"]
+    assert result.executed_steps == ["transcribe", "translate", "compose"]
     assert loaded.steps["compose"].status == "completed"
 
 
@@ -54,10 +54,30 @@ def test_rerun_invalidates_selected_step_and_downstream(tmp_path: Path) -> None:
     rerun_result = runner.rerun(result.job.job_id, from_step="translate")
     loaded = store.load(result.job.job_id)
 
-    assert rerun_result.executed_steps == ["translate", "synthesize", "compose"]
+    assert rerun_result.executed_steps == ["translate", "compose"]
     assert loaded.steps["download"].status == "completed"
     assert loaded.steps["translate"].status == "completed"
     assert loaded.current_step == "compose"
+
+
+def test_rerun_handles_auxiliary_artifacts_linked_to_pipeline_steps(tmp_path: Path) -> None:
+    runner, store = build_runner(tmp_path)
+    result = runner.run("https://youtube.com/watch?v=abc")
+    job = store.load(result.job.job_id).with_artifacts(
+        {
+            "transcribe_audio": str(tmp_path / "jobs" / result.job.job_id / "transcribe" / "source.wav"),
+            "compose_srt": str(tmp_path / "jobs" / result.job.job_id / "compose" / "final-subtitles.srt"),
+        }
+    )
+    store.save(job)
+
+    rerun_result = runner.rerun(result.job.job_id, from_step="translate")
+    loaded = store.load(result.job.job_id)
+
+    assert rerun_result.executed_steps == ["translate", "compose"]
+    assert "download" in loaded.artifacts
+    assert "transcribe_audio" in loaded.artifacts
+    assert "compose_srt" not in loaded.artifacts
 
 
 def test_runner_registers_artifacts_and_step_directories(tmp_path: Path) -> None:
@@ -69,7 +89,9 @@ def test_runner_registers_artifacts_and_step_directories(tmp_path: Path) -> None
 
     assert (job_root / "download").is_dir()
     assert (job_root / "compose").is_dir()
-    assert loaded.artifacts["compose"].endswith("compose/compose.txt")
+    compose_artifact = Path(loaded.artifacts["compose"])
+    assert compose_artifact.parent.name == "compose"
+    assert compose_artifact.name == "compose.txt"
 
 
 def test_runner_records_step_failures_in_job_and_log(tmp_path: Path) -> None:
@@ -86,7 +108,6 @@ def test_runner_records_step_failures_in_job_and_log(tmp_path: Path) -> None:
         "download": FakeStep("download"),
         "transcribe": FailingStep(),
         "translate": FakeStep("translate"),
-        "synthesize": FakeStep("synthesize"),
         "compose": FakeStep("compose"),
     }
     runner = PipelineRunner(store=store, steps=steps)
@@ -107,10 +128,6 @@ def test_runner_records_step_failures_in_job_and_log(tmp_path: Path) -> None:
 def test_compose_step_writes_final_artifacts(tmp_path: Path, monkeypatch) -> None:
     source_video = tmp_path / "source.mp4"
     source_video.write_text("video", encoding="utf-8")
-    clip_one = tmp_path / "segment-0001.mp3"
-    clip_two = tmp_path / "segment-0002.mp3"
-    clip_one.write_text("one", encoding="utf-8")
-    clip_two.write_text("two", encoding="utf-8")
     translation_path = tmp_path / "translation.json"
     translation_path.write_text(
         json.dumps(
@@ -123,24 +140,10 @@ def test_compose_step_writes_final_artifacts(tmp_path: Path, monkeypatch) -> Non
         ),
         encoding="utf-8",
     )
-    synthesize_path = tmp_path / "dubbed-audio.json"
-    synthesize_path.write_text(
-        json.dumps(
-            {
-                "clips": [
-                    {"audio_path": str(clip_one), "text": "bonjour"},
-                    {"audio_path": str(clip_two), "text": "monde"},
-                ]
-            }
-        ),
-        encoding="utf-8",
-    )
     ffmpeg_calls: list[list[str]] = []
 
     def fake_run_ffmpeg(args: list[str]):
         ffmpeg_calls.append(args)
-        if str(tmp_path / "merged-dub.mp3") in args:
-            (tmp_path / "merged-dub.mp3").write_text("merged", encoding="utf-8")
         if str(tmp_path / "final-video.mp4") in args:
             (tmp_path / "final-video.mp4").write_text("final", encoding="utf-8")
         return None
@@ -150,7 +153,6 @@ def test_compose_step_writes_final_artifacts(tmp_path: Path, monkeypatch) -> Non
         {
             "download": str(source_video),
             "translate": str(translation_path),
-            "synthesize": str(synthesize_path),
         }
     )
     step = ComposeStep()
@@ -163,7 +165,14 @@ def test_compose_step_writes_final_artifacts(tmp_path: Path, monkeypatch) -> Non
     assert Path(result.artifacts["compose_srt"]).exists()
     assert "bonjour" in Path(result.artifacts["compose_srt"]).read_text(encoding="utf-8")
     assert "monde" in Path(result.artifacts["compose_srt"]).read_text(encoding="utf-8")
-    assert len(ffmpeg_calls) == 2
+    assert len(ffmpeg_calls) == 1
+    assert ffmpeg_calls[0][:2] == ["-i", str(source_video)]
+    assert "0:a?" in ffmpeg_calls[0]
+    assert "-vf" in ffmpeg_calls[0]
+    assert "subtitles='" in ffmpeg_calls[0][ffmpeg_calls[0].index("-vf") + 1]
+    assert "libx264" in ffmpeg_calls[0]
+    assert "aac" in ffmpeg_calls[0]
+    assert str(tmp_path / "final-video.mp4") == ffmpeg_calls[0][-1]
 
 
 def test_download_step_uses_ytdlp_and_returns_downloaded_file(tmp_path: Path, monkeypatch) -> None:
@@ -172,6 +181,7 @@ def test_download_step_uses_ytdlp_and_returns_downloaded_file(tmp_path: Path, mo
     def fake_run_ytdlp(args: list[str]):
         captured["args"] = args
         (tmp_path / "source.mp4").write_text("video", encoding="utf-8")
+        (tmp_path / "source.en.srt").write_text("1\n00:00:00,000 --> 00:00:01,000\nHello\n", encoding="utf-8")
         return None
 
     monkeypatch.setattr("ytdub.pipeline.steps.download.run_ytdlp", fake_run_ytdlp)
@@ -181,8 +191,15 @@ def test_download_step_uses_ytdlp_and_returns_downloaded_file(tmp_path: Path, mo
     result = step.run(job, tmp_path)
 
     assert "--output" in captured["args"]
+    assert "--write-subs" in captured["args"]
+    assert "--write-auto-subs" in captured["args"]
+    assert "--sub-langs" in captured["args"]
+    assert "en.*" in captured["args"]
+    assert "--convert-subs" in captured["args"]
+    assert "srt" in captured["args"]
     assert "https://youtube.com/watch?v=abc" in captured["args"]
     assert result.artifacts["download"].endswith("source.mp4")
+    assert result.artifacts["download_subtitles"].endswith("source.en.srt")
 
 
 def test_transcribe_step_extracts_audio_and_writes_transcript(tmp_path: Path, monkeypatch) -> None:
@@ -205,7 +222,52 @@ def test_transcribe_step_extracts_audio_and_writes_transcript(tmp_path: Path, mo
 
     assert captured["args"][0] == "-i"
     assert str(source_video) in captured["args"]
+    assert "-ac" in captured["args"]
+    assert captured["args"][captured["args"].index("-ac") + 1] == "1"
+    assert "-ar" in captured["args"]
+    assert captured["args"][captured["args"].index("-ar") + 1] == "16000"
     assert result.artifacts["transcribe"].endswith("transcript.json")
+
+
+def test_transcribe_step_uses_downloaded_subtitles_before_asr(tmp_path: Path, monkeypatch) -> None:
+    source_video = tmp_path / "source.mp4"
+    source_video.write_text("video", encoding="utf-8")
+    subtitle_path = tmp_path / "source.en.srt"
+    stale_audio_path = tmp_path / "source.wav"
+    stale_audio_path.write_text("stale", encoding="utf-8")
+    subtitle_path.write_text(
+        "1\n00:00:00,000 --> 00:00:01,200\nHello world\n\n"
+        "2\n00:00:01,500 --> 00:00:03,000\nSecond line\n",
+        encoding="utf-8",
+    )
+
+    def fail_run_ffmpeg(_args: list[str]):
+        raise AssertionError("ffmpeg should not run when downloaded subtitles are available")
+
+    class FakeTranscriber:
+        def transcribe(self, _audio_path: Path, transport=None) -> list[Segment]:
+            raise AssertionError("ASR provider should not run when downloaded subtitles are available")
+
+    monkeypatch.setattr("ytdub.pipeline.steps.transcribe.run_ffmpeg", fail_run_ffmpeg)
+    job = JobRecord.create(job_id="job-123", url="https://youtube.com/watch?v=abc").with_artifacts(
+        {
+            "download": str(source_video),
+            "download_subtitles": str(subtitle_path),
+        }
+    )
+    step = TranscribeStep(transcriber=FakeTranscriber())
+
+    result = step.run(job, tmp_path)
+    payload = json.loads(Path(result.artifacts["transcribe"]).read_text(encoding="utf-8"))
+
+    assert payload["provider"] == "youtube_subtitles"
+    assert payload["extracted_audio"] is None
+    assert "transcribe_audio" not in result.artifacts
+    assert not stale_audio_path.exists()
+    assert payload["segments"] == [
+        {"start_ms": 0, "end_ms": 1200, "text": "Hello world"},
+        {"start_ms": 1500, "end_ms": 3000, "text": "Second line"},
+    ]
 
 
 def test_transcribe_step_writes_segments_from_selected_provider(tmp_path: Path, monkeypatch) -> None:

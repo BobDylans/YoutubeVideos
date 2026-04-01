@@ -12,6 +12,7 @@ class OpenAITTS:
     api_key: str
     voice: str
     model: str = "gpt-4o-mini-tts"
+    base_url: str = "https://api.302.ai/v1"
     name: str = "openai"
 
     def build_payload(self, segment: Segment) -> dict[str, object]:
@@ -19,7 +20,7 @@ class OpenAITTS:
             "model": self.model,
             "voice": self.voice,
             "input": segment.text,
-            "format": "mp3",
+            "response_format": "mp3",
         }
 
     def build_headers(self) -> dict[str, str]:
@@ -31,10 +32,11 @@ class OpenAITTS:
         output_path: Path,
         transport: HttpTransport | None = None,
     ) -> Path:
+        base_url = self.base_url.rstrip("/")
         response = (transport or UrllibTransport()).send(
             HttpRequest(
                 method="POST",
-                url="https://api.openai.com/v1/audio/speech",
+                url=f"{base_url}/audio/speech",
                 headers={
                     **self.build_headers(),
                     "Accept": "audio/mpeg",

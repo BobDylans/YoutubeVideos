@@ -4,7 +4,7 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 
 
-PIPELINE_STEPS = ("download", "transcribe", "translate", "synthesize", "compose")
+PIPELINE_STEPS = ("download", "transcribe", "translate", "compose")
 
 
 @dataclass(frozen=True)
@@ -15,9 +15,9 @@ class StepStatus:
 
 @dataclass(frozen=True)
 class JobSettings:
-    transcriber: str = "deepgram"
-    translator: str = "deepl"
-    tts: str = "openai"
+    transcriber: str = "openai"
+    translator: str = "deepseek"
+    tts: str = "none"
     target_language: str = "zh"
 
 
@@ -67,18 +67,23 @@ class JobRecord:
     def from_dict(cls, data: dict[str, object]) -> "JobRecord":
         raw_steps = data["steps"]
         assert isinstance(raw_steps, dict)
+        steps = _normalize_steps(raw_steps)
+        current_step = str(data["current_step"])
+        if current_step not in steps:
+            current_step = next(
+                (
+                    step_name
+                    for step_name in PIPELINE_STEPS
+                    if steps[step_name].status != "completed"
+                ),
+                PIPELINE_STEPS[-1],
+            )
         return cls(
             job_id=str(data["job_id"]),
             url=str(data["url"]),
             settings=JobSettings(**dict(data.get("settings", {}))),
-            current_step=str(data["current_step"]),
-            steps={
-                step_name: StepStatus(
-                    status=str(step_data["status"]),
-                    updated_at=str(step_data["updated_at"]),
-                )
-                for step_name, step_data in raw_steps.items()
-            },
+            current_step=current_step,
+            steps=steps,
             artifacts={key: str(value) for key, value in dict(data.get("artifacts", {})).items()},
             created_at=str(data["created_at"]),
             updated_at=str(data["updated_at"]),
@@ -127,7 +132,8 @@ class JobRecord:
         remaining_artifacts = {
             name: path
             for name, path in self.artifacts.items()
-            if PIPELINE_STEPS.index(name) < start_index
+            if (artifact_step_index := _artifact_step_index(name)) is None
+            or artifact_step_index < start_index
         }
         return JobRecord(
             job_id=self.job_id,
@@ -143,3 +149,37 @@ class JobRecord:
 
 def _timestamp() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _artifact_step_index(name: str) -> int | None:
+    if name in PIPELINE_STEPS:
+        return PIPELINE_STEPS.index(name)
+
+    if name == "synthesize":
+        return PIPELINE_STEPS.index("compose")
+
+    step_prefix, _, _ = name.partition("_")
+    if step_prefix in PIPELINE_STEPS:
+        return PIPELINE_STEPS.index(step_prefix)
+
+    if step_prefix == "synthesize":
+        return PIPELINE_STEPS.index("compose")
+
+    return None
+
+
+def _normalize_steps(raw_steps: dict[str, object]) -> dict[str, StepStatus]:
+    normalized: dict[str, StepStatus] = {}
+    fallback_updated_at = _timestamp()
+    for step_name in PIPELINE_STEPS:
+        step_data = raw_steps.get(step_name)
+        if isinstance(step_data, dict):
+            normalized[step_name] = StepStatus(
+                status=str(step_data["status"]),
+                updated_at=str(step_data["updated_at"]),
+            )
+            continue
+
+        normalized[step_name] = StepStatus(status="pending", updated_at=fallback_updated_at)
+
+    return normalized

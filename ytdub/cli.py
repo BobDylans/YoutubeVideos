@@ -96,13 +96,13 @@ def _build_runtime() -> tuple[PipelineRunner, JobStore, JobSettings]:
     config = load_config(Path("configs/default.toml"))
     runtime_paths = resolve_runtime_paths(config)
     store = JobStore(runtime_paths.jobs_dir)
+    job_settings = resolve_job_settings(config)
     steps = (
         build_stub_steps()
         if os.environ.get("YTDUB_USE_STUB_STEPS") == "1"
-        else build_default_steps(create_runtime_registry(config))
+        else build_default_steps(create_runtime_registry(config, job_settings))
     )
     runner = PipelineRunner(store=store, steps=steps)
-    job_settings = resolve_job_settings(config)
     return runner, store, job_settings
 
 

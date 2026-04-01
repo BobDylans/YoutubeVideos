@@ -15,6 +15,12 @@ class DownloadStep:
         run_ytdlp(
             [
                 "--no-progress",
+                "--write-subs",
+                "--write-auto-subs",
+                "--sub-langs",
+                "en.*",
+                "--convert-subs",
+                "srt",
                 "--output",
                 str(output_template),
                 job.url,
@@ -22,7 +28,13 @@ class DownloadStep:
         )
 
         matches = sorted(work_dir.glob("source.*"))
-        if not matches:
+        video_matches = [path for path in matches if path.suffix.lower() not in {".srt", ".vtt", ".ass"}]
+        if not video_matches:
             raise FileNotFoundError(f"yt-dlp did not produce a file in {work_dir}")
 
-        return StepResult(artifacts={self.name: str(matches[0])})
+        artifacts = {self.name: str(video_matches[0])}
+        subtitle_matches = sorted(path for path in matches if path.suffix.lower() in {".srt", ".vtt"})
+        if subtitle_matches:
+            artifacts["download_subtitles"] = str(subtitle_matches[0])
+
+        return StepResult(artifacts=artifacts)

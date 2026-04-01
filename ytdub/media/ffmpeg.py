@@ -15,7 +15,7 @@ class ExternalCommandError(RuntimeError):
 
 
 def run_ffmpeg(args: list[str]) -> CompletedProcess[str]:
-    return _run_command("ffmpeg", args)
+    return _run_command("ffmpeg", ["-y", *args])
 
 
 def run_ffprobe(args: list[str]) -> CompletedProcess[str]:

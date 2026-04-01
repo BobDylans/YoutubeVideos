@@ -3,9 +3,9 @@ jobs_dir = "jobs"
 outputs_dir = "outputs"
 
 [providers]
-transcriber = "deepgram"
-translator = "deepl"
-tts = "openai"
+transcriber = "openai"
+translator = "deepseek"
+tts = "none"
 
 [defaults]
 target_language = "zh"
@@ -15,6 +15,9 @@ api_key_env = "DEEPGRAM_API_KEY"
 
 [credentials.deepl]
 api_key_env = "DEEPL_API_KEY"
+
+[credentials.deepseek]
+api_key_env = "OPENAI_API_KEY"
 
 [credentials.openai]
 api_key_env = "OPENAI_API_KEY"

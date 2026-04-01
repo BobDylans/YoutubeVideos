@@ -35,7 +35,7 @@ def test_run_command_accepts_url(tmp_path: Path) -> None:
     assert result.returncode == 0
     payload = json.loads(result.stdout)
     assert payload["job_id"]
-    assert payload["executed_steps"] == ["download", "transcribe", "translate", "synthesize", "compose"]
+    assert payload["executed_steps"] == ["download", "transcribe", "translate", "compose"]
 
 
 def test_show_job_command_prints_saved_job(tmp_path: Path) -> None:
