@@ -68,3 +68,51 @@ def test_deepseek_translates_segments_with_injected_transport() -> None:
     assert captured["request"].url == "https://api.302.ai/v1/chat/completions"
     assert captured["request"].headers["Authorization"] == "Bearer secret"
     assert [segment.text for segment in translated] == ["bonjour", "monde"]
+
+
+def test_deepseek_retries_by_splitting_batches_when_count_mismatches() -> None:
+    requests: list[int] = []
+
+    class FakeTransport:
+        def send(self, request: HttpRequest) -> HttpResponse:
+            user_payload = json.loads(request.json_body["messages"][1]["content"])
+            batch_size = len(user_payload["segments"])
+            requests.append(batch_size)
+
+            if batch_size == 2:
+                translations = [{"text": "only-one"}]
+            else:
+                source_text = user_payload["segments"][0]["text"]
+                translations = [{"text": f"translated:{source_text}"}]
+
+            return HttpResponse(
+                status_code=200,
+                headers={"content-type": "application/json"},
+                content=json.dumps(
+                    {
+                        "choices": [
+                            {
+                                "message": {
+                                    "content": json.dumps({"translations": translations})
+                                }
+                            }
+                        ]
+                    }
+                ).encode("utf-8"),
+            )
+
+    provider = DeepSeekTranslator(api_key="secret")
+    translated = provider.translate_segments(
+        [
+            Segment(start_ms=0, end_ms=500, text="hello"),
+            Segment(start_ms=600, end_ms=1000, text="world"),
+        ],
+        target_language="fr",
+        transport=FakeTransport(),
+    )
+
+    assert requests == [2, 1, 1]
+    assert [segment.text for segment in translated] == [
+        "translated:hello",
+        "translated:world",
+    ]

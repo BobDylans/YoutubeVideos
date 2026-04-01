@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from ytdub.media.ffmpeg import ExternalCommandError
 from ytdub.models.job import JobRecord, JobSettings
 from ytdub.models.segments import Segment
 from ytdub.pipeline.steps.compose import ComposeStep
@@ -200,6 +201,36 @@ def test_download_step_uses_ytdlp_and_returns_downloaded_file(tmp_path: Path, mo
     assert "https://youtube.com/watch?v=abc" in captured["args"]
     assert result.artifacts["download"].endswith("source.mp4")
     assert result.artifacts["download_subtitles"].endswith("source.en.srt")
+
+
+def test_download_step_retries_without_subtitles_when_ytdlp_subtitle_fetch_fails(
+    tmp_path: Path, monkeypatch
+) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run_ytdlp(args: list[str]):
+        calls.append(args)
+        if len(calls) == 1:
+            raise ExternalCommandError(
+                command="yt-dlp",
+                exit_code=1,
+                stderr="ERROR: Unable to download video subtitles for 'en': HTTP Error 429: Too Many Requests",
+            )
+        (tmp_path / "source.webm").write_text("video", encoding="utf-8")
+        return None
+
+    monkeypatch.setattr("ytdub.pipeline.steps.download.run_ytdlp", fake_run_ytdlp)
+    job = JobRecord.create(job_id="job-123", url="https://youtube.com/watch?v=abc")
+    step = DownloadStep()
+
+    result = step.run(job, tmp_path)
+
+    assert len(calls) == 2
+    assert "--write-subs" in calls[0]
+    assert "--write-subs" not in calls[1]
+    assert "--write-auto-subs" not in calls[1]
+    assert result.artifacts["download"].endswith("source.webm")
+    assert "download_subtitles" not in result.artifacts
 
 
 def test_transcribe_step_extracts_audio_and_writes_transcript(tmp_path: Path, monkeypatch) -> None:

@@ -12,6 +12,7 @@ class DeepSeekTranslator:
     api_key: str
     model: str = "deepseek-chat"
     base_url: str = "https://api.302.ai/v1"
+    batch_size: int = 8
     name: str = "deepseek"
 
     def build_payload(
@@ -61,7 +62,70 @@ class DeepSeekTranslator:
         target_language: str,
         transport: HttpTransport | None = None,
     ) -> list[Segment]:
-        response = (transport or UrllibTransport()).send(
+        if not segments:
+            return []
+
+        active_transport = transport or UrllibTransport()
+        translated: list[Segment] = []
+        for start in range(0, len(segments), self.batch_size):
+            batch = segments[start : start + self.batch_size]
+            translated.extend(
+                self._translate_batch_with_fallback(
+                    batch,
+                    target_language=target_language,
+                    transport=active_transport,
+                )
+            )
+        return translated
+
+    def _translate_batch_with_fallback(
+        self,
+        segments: list[Segment],
+        *,
+        target_language: str,
+        transport: HttpTransport,
+    ) -> list[Segment]:
+        translations = self._request_translations(
+            segments,
+            target_language=target_language,
+            transport=transport,
+        )
+        if len(translations) == len(segments):
+            return [
+                Segment(
+                    start_ms=segment.start_ms,
+                    end_ms=segment.end_ms,
+                    text=str(translations[index]["text"]),
+                )
+                for index, segment in enumerate(segments)
+            ]
+
+        if len(segments) == 1:
+            raise ValueError(
+                f"DeepSeek returned {len(translations)} translations for {len(segments)} segments"
+            )
+
+        midpoint = max(1, len(segments) // 2)
+        left = self._translate_batch_with_fallback(
+            segments[:midpoint],
+            target_language=target_language,
+            transport=transport,
+        )
+        right = self._translate_batch_with_fallback(
+            segments[midpoint:],
+            target_language=target_language,
+            transport=transport,
+        )
+        return [*left, *right]
+
+    def _request_translations(
+        self,
+        segments: list[Segment],
+        *,
+        target_language: str,
+        transport: HttpTransport,
+    ) -> list[dict[str, object]]:
+        response = transport.send(
             HttpRequest(
                 method="POST",
                 url=f"{self.base_url.rstrip('/')}/chat/completions",
@@ -76,19 +140,7 @@ class DeepSeekTranslator:
             .get("content", "{}")
         )
         translated_payload = _parse_json_content(str(content))
-        translations = translated_payload.get("translations", [])
-        if len(translations) != len(segments):
-            raise ValueError(
-                f"DeepSeek returned {len(translations)} translations for {len(segments)} segments"
-            )
-        return [
-            Segment(
-                start_ms=segment.start_ms,
-                end_ms=segment.end_ms,
-                text=str(translations[index]["text"]),
-            )
-            for index, segment in enumerate(segments)
-        ]
+        return list(translated_payload.get("translations", []))
 
 
 def _parse_json_content(content: str) -> dict[str, object]:
